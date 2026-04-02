@@ -102,22 +102,4 @@ async function start() {
   });
 }
 
-  // Lance le cron de snapshots automatiques
-  startSnapshotJob();
-
-  app.listen(PORT, () => {
-    console.log(`\n🚀 Brawl Stats Backend démarré sur http://localhost:${PORT}`);
-    console.log(`   Routes disponibles :`);
-    console.log(`   GET  /health`);
-    console.log(`   GET  /api/players/:tag`);
-    console.log(`   GET  /api/players/:tag/history?days=90`);
-    console.log(`   GET  /api/players/:tag/battlelog`);
-    console.log(`   POST /api/players/:tag/track`);
-    console.log(`   GET  /api/brawlers`);
-    console.log(`   GET  /api/rankings/:country`);
-    console.log(`   GET  /api/events`);
-    console.log(`   GET  /api/clubs/:tag\n`);
-  });
-}
-
 start();
