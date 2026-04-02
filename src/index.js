@@ -28,7 +28,11 @@ app.use(cors({
 }));
 
 app.use(express.json());
-
+app.get("/myip", async (req, res) => {
+  const r = await fetch("https://api.ipify.org?format=json");
+  const d = await r.json();
+  res.json(d);
+});
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get("/health", async (req, res) => {
   try {
