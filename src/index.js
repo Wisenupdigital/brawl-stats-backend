@@ -71,48 +71,77 @@ async function updateSupercellWhitelist() {
     const { ip } = await ipRes.json();
     console.log(`🌐 IP actuelle : ${ip}`);
 
-    const SUPERCELL_HEADERS = {
-  "Content-Type": "application/json",
-  "Origin": "https://developer.brawlstars.com",
-  "Referer": "https://developer.brawlstars.com/",
-};
+    const BASE_HEADERS = {
+      "Content-Type": "application/json",
+      "Origin": "https://developer.brawlstars.com",
+      "Referer": "https://developer.brawlstars.com/",
+    };
 
-// 2. Login
-const loginRes = await fetch("https://developer.brawlstars.com/api/login", {
-  method: "POST",
-  headers: SUPERCELL_HEADERS,
-  body: JSON.stringify({ email, password }),
-});
+    // 2. Login
+    const loginRes = await fetch("https://developer.brawlstars.com/api/login", {
+      method: "POST",
+      headers: BASE_HEADERS,
+      body: JSON.stringify({ email, password }),
+    });
 
-// ... après avoir extrait sessionCookie ...
+    const contentType = loginRes.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      const text = await loginRes.text();
+      throw new Error(`Login non-JSON : ${text.slice(0, 150)}`);
+    }
 
-// 3. Liste des clés
-const keysRes = await fetch("https://developer.brawlstars.com/api/apikey/list", {
-  method: "POST",
-  headers: { ...SUPERCELL_HEADERS, cookie: sessionCookie },
-  body: JSON.stringify({}),
-});
+    const loginData = await loginRes.json();
+    if (loginData.status?.message !== "ok") {
+      throw new Error(`Login échoué : ${JSON.stringify(loginData.status)}`);
+    }
 
-// 4. Suppression
-await fetch("https://developer.brawlstars.com/api/apikey/revoke", {
-  method: "POST",
-  headers: { ...SUPERCELL_HEADERS, cookie: sessionCookie },
-  body: JSON.stringify({ id: old.id }),
-});
+    // Extraire le cookie de session
+    const rawCookie = loginRes.headers.get("set-cookie") || "";
+    const sessionCookie = rawCookie.split(";")[0];
+    if (!sessionCookie) throw new Error("Cookie de session introuvable");
+    console.log("✅ Login Supercell réussi");
 
-// 5. Création
-const createRes = await fetch("https://developer.brawlstars.com/api/apikey/create", {
-  method: "POST",
-  headers: { ...SUPERCELL_HEADERS, cookie: sessionCookie },
-  body: JSON.stringify({
-    name:        keyName,
-    description: "Auto-updated",
-    cidrRanges:  [ip],
-    scopes:      ["brawlstars"],
-  }),
-});
+    const AUTH_HEADERS = { ...BASE_HEADERS, cookie: sessionCookie };
 
-    // 6. Met à jour BRAWL_API_KEY en mémoire
+    // 3. Liste des clés
+    const keysRes = await fetch("https://developer.brawlstars.com/api/apikey/list", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({}),
+    });
+    const keysData = await keysRes.json();
+    const keys = keysData.keys || [];
+    console.log(`🔑 ${keys.length} clé(s) trouvée(s)`);
+
+    // 4. Supprime les anciennes clés avec ce nom
+    const oldKeys = keys.filter(k => k.name === keyName);
+    for (const old of oldKeys) {
+      await fetch("https://developer.brawlstars.com/api/apikey/revoke", {
+        method: "POST",
+        headers: AUTH_HEADERS,
+        body: JSON.stringify({ id: old.id }),
+      });
+      console.log(`🗑️  Clé supprimée : ${old.id}`);
+    }
+
+    // 5. Crée une nouvelle clé avec l'IP actuelle
+    const createRes = await fetch("https://developer.brawlstars.com/api/apikey/create", {
+      method: "POST",
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        name:        keyName,
+        description: "Auto-updated by brawl-stats-backend",
+        cidrRanges:  [ip],
+        scopes:      ["brawlstars"],
+      }),
+    });
+    const createData = await createRes.json();
+    console.log("Réponse création :", JSON.stringify(createData));
+
+    const newApiKey = createData.key?.key;
+    if (!newApiKey) throw new Error(`Création échouée : ${JSON.stringify(createData)}`);
+
+    // 6. Met à jour la clé en mémoire
     process.env.BRAWL_API_KEY = newApiKey;
     console.log(`✅ Nouvelle clé créée pour IP ${ip}`);
 
@@ -162,7 +191,6 @@ async function start() {
     console.error("❌ Migration échouée :", err.message);
   }
 
-  // Whitelist au démarrage — non bloquant
   await updateSupercellWhitelist();
 
   startSnapshotJob();
