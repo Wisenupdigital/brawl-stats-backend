@@ -72,62 +72,78 @@ async function updateSupercellWhitelist() {
     console.log(`🌐 IP actuelle : ${ip}`);
 
     // 2. Login Supercell
-    const loginRes = await fetch("https://developer.brawlstars.com/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+const loginRes = await fetch("https://developer.brawlstars.com/api/login", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email, password }),
+});
 
-    // Vérifie qu'on reçoit bien du JSON
-    const contentType = loginRes.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
-      const text = await loginRes.text();
-      throw new Error(`Login: réponse non-JSON → ${text.slice(0, 100)}`);
-    }
+const contentType = loginRes.headers.get("content-type") || "";
+if (!contentType.includes("application/json")) {
+  const text = await loginRes.text();
+  throw new Error(`Login: réponse non-JSON → ${text.slice(0, 100)}`);
+}
 
-    const loginData = await loginRes.json();
-    if (loginData.status?.message !== "ok") {
-      throw new Error(`Login échoué : ${JSON.stringify(loginData.status)}`);
-    }
-    const cookie = loginRes.headers.get("set-cookie");
-    console.log("✅ Login Supercell réussi");
+const loginData = await loginRes.json();
+if (loginData.status?.message !== "ok") {
+  throw new Error(`Login échoué : ${JSON.stringify(loginData.status)}`);
+}
 
-    // 3. Liste des clés existantes
-    const keysRes = await fetch("https://developer.brawlstars.com/api/apikey/list", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", cookie },
-      body: JSON.stringify({}),
-    });
-    const { keys } = await keysRes.json();
+// Extraire uniquement le token de session (sans les directives)
+const rawCookie = loginRes.headers.get("set-cookie") || "";
+const sessionCookie = rawCookie.split(";")[0];
+console.log("✅ Login Supercell réussi");
 
-    // 4. Supprime les anciennes clés avec ce nom
-    const oldKeys = keys?.filter(k => k.name === keyName) || [];
-    for (const old of oldKeys) {
-      await fetch("https://developer.brawlstars.com/api/apikey/revoke", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", cookie },
-        body: JSON.stringify({ id: old.id }),
-      });
-      console.log(`🗑️  Ancienne clé supprimée : ${old.id}`);
-    }
+// 3. Liste des clés existantes
+const keysRes = await fetch("https://developer.brawlstars.com/api/apikey/list", {
+  method: "POST",
+  headers: { 
+    "Content-Type": "application/json",
+    "cookie": sessionCookie,
+  },
+  body: JSON.stringify({}),
+});
+const keysData = await keysRes.json();
+const keys = keysData.keys || [];
 
-    // 5. Crée une nouvelle clé avec l'IP actuelle
-    const createRes = await fetch("https://developer.brawlstars.com/api/apikey/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", cookie },
-      body: JSON.stringify({
-        name:        keyName,
-        description: "Auto-updated by brawl-stats-backend",
-        cidrRanges:  [ip],
-        scopes:      ["clash"],
-      }),
-    });
-    const createData = await createRes.json();
-    const newApiKey = createData.key?.key;
+// 4. Supprime les anciennes clés avec ce nom
+const oldKeys = keys.filter(k => k.name === keyName);
+for (const old of oldKeys) {
+  await fetch("https://developer.brawlstars.com/api/apikey/revoke", {
+    method: "POST",
+    headers: { 
+      "Content-Type": "application/json",
+      "cookie": sessionCookie,
+    },
+    body: JSON.stringify({ id: old.id }),
+  });
+  console.log(`🗑️  Ancienne clé supprimée : ${old.id}`);
+}
 
-    if (!newApiKey) {
-      throw new Error(`Création clé échouée : ${JSON.stringify(createData)}`);
-    }
+// 5. Crée une nouvelle clé avec l'IP actuelle
+const createRes = await fetch("https://developer.brawlstars.com/api/apikey/create", {
+  method: "POST",
+  headers: { 
+    "Content-Type": "application/json",
+    "cookie": sessionCookie,
+  },
+  body: JSON.stringify({
+    name:        keyName,
+    description: "Auto-updated by brawl-stats-backend",
+    cidrRanges:  [ip],
+    scopes:      ["clash"],
+  }),
+});
+const createData = await createRes.json();
+console.log("Réponse création :", JSON.stringify(createData));
+
+const newApiKey = createData.key?.key;
+if (!newApiKey) {
+  throw new Error(`Création clé échouée : ${JSON.stringify(createData)}`);
+}
+
+process.env.BRAWL_API_KEY = newApiKey;
+console.log(`✅ Nouvelle clé créée pour IP ${ip}`);
 
     // 6. Met à jour BRAWL_API_KEY en mémoire
     process.env.BRAWL_API_KEY = newApiKey;
