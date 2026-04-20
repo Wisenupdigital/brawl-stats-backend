@@ -8,19 +8,17 @@ const { brawlersRouter, rankingsRouter, eventsRouter, clubsRouter } = require(".
 const { startSnapshotJob } = require("./jobs/snapshotJob");
 const pool = require("./db/pool");
 
-// ─── App ──────────────────────────────────────────────────────────────────────
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ─── CORS ─────────────────────────────────────────────────────────────────────
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
   .map(o => o.trim());
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Autorise les appels sans origin (ex: curl, Postman) en dev
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin))
+      return cb(null, true);
     cb(new Error(`CORS bloqué pour : ${origin}`));
   },
   methods: ["GET", "POST", "DELETE"],
@@ -28,12 +26,13 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
 app.get("/myip", async (req, res) => {
   const r = await fetch("https://api.ipify.org?format=json");
   const d = await r.json();
   res.json(d);
 });
-// ─── Health check ─────────────────────────────────────────────────────────────
+
 app.get("/health", async (req, res) => {
   try {
     await pool.query("SELECT 1");
@@ -43,20 +42,75 @@ app.get("/health", async (req, res) => {
   }
 });
 
-// ─── Routes API ───────────────────────────────────────────────────────────────
 app.use("/api/players",  playersRouter);
 app.use("/api/brawlers", brawlersRouter);
 app.use("/api/rankings", rankingsRouter);
 app.use("/api/events",   eventsRouter);
 app.use("/api/clubs",    clubsRouter);
 
-// ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: { status: 404, message: `Route inconnue : ${req.method} ${req.path}` } });
 });
 
-// ─── Erreurs ──────────────────────────────────────────────────────────────────
 app.use(errorHandler);
+
+// ─── Whitelist automatique Supercell ─────────────────────────────────────────
+async function updateSupercellWhitelist() {
+  const email    = process.env.SUPERCELL_EMAIL;
+  const password = process.env.SUPERCELL_PASSWORD;
+  const keyName  = process.env.SUPERCELL_KEY_NAME;
+
+  if (!email || !password || !keyName) {
+    console.log("⚠️  SUPERCELL_EMAIL/PASSWORD/KEY_NAME manquants → whitelist ignorée");
+    return;
+  }
+
+  try {
+    // 1. IP actuelle
+    const ipRes = await fetch("https://api.ipify.org?format=json");
+    const { ip } = await ipRes.json();
+    console.log(`🌐 IP actuelle : ${ip}`);
+
+    // 2. Login Supercell
+    const loginRes = await fetch("https://developer.brawlstars.com/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginData = await loginRes.json();
+    if (!loginData.status?.message?.includes("ok")) {
+      throw new Error(`Login échoué : ${JSON.stringify(loginData)}`);
+    }
+    const cookie = loginRes.headers.get("set-cookie");
+
+    // 3. Liste des clés
+    const keysRes = await fetch("https://developer.brawlstars.com/api/apikey/list", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({}),
+    });
+    const { keys } = await keysRes.json();
+    const key = keys?.find(k => k.name === keyName);
+    if (!key) throw new Error(`Clé "${keyName}" introuvable parmi : ${keys?.map(k => k.name).join(", ")}`);
+
+    // 4. Mise à jour avec la nouvelle IP
+    const updateRes = await fetch("https://developer.brawlstars.com/api/apikey/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({
+        id:          key.id,
+        name:        key.name,
+        description: key.description || "",
+        cidrRanges:  [ip],
+        scopes:      key.scopes,
+      }),
+    });
+    const updateData = await updateRes.json();
+    console.log(`✅ Whitelist mise à jour → ${ip}`, updateData?.status?.message || "");
+  } catch (err) {
+    console.error("❌ Whitelist update échouée :", err.message);
+  }
+}
 
 // ─── Démarrage ────────────────────────────────────────────────────────────────
 async function start() {
@@ -68,7 +122,6 @@ async function start() {
     process.exit(1);
   }
 
-  // Migration automatique au démarrage
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tracked_players (
@@ -99,6 +152,9 @@ async function start() {
   } catch (err) {
     console.error("❌ Migration échouée :", err.message);
   }
+
+  // Whitelist au démarrage — non bloquant
+  await updateSupercellWhitelist();
 
   startSnapshotJob();
   app.listen(PORT, () => {
