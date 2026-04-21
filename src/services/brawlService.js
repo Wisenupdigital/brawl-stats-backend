@@ -2,10 +2,10 @@ const fetch = require("node-fetch");
 const pool = require("../db/pool");
 
 const BASE_URL = "https://api.brawlstars.com/v1";
-const API_KEY = process.env.BRAWL_API_KEY;
 
 // ─── Fetch générique vers l'API Brawl Stars ──────────────────────────────────
 async function brawlFetch(endpoint) {
+  const API_KEY = process.env.BRAWL_API_KEY; // ← lu à chaque requête
   const res = await fetch(`${BASE_URL}${endpoint}`, {
     headers: {
       Authorization: `Bearer ${API_KEY}`,
